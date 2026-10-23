@@ -5,6 +5,9 @@
 #include "chat_core/ChatStore.hpp"
 #include "chat_core/Lexer.hpp"
 #include "chat_core/Command.hpp"
+#include "chat_core/Errors.hpp"
+#include <stdexcept>
+#include <random>
 
 // ЭТАП 1
 
@@ -111,12 +114,13 @@ TEST(LexerTest, NoStringCopiesInsideLexer) {
 }
 
 TEST(ParserTest, MsgTailIsWholeRemainder) {
-    std::string s = "/msg alice hello world, how are you?";
+    std::string s = "/msg #alice hello world, how are you?";
     auto cmd = parse_command(Lexer::lex(s));
     ASSERT_TRUE(cmd.has_value());
     ASSERT_TRUE(std::holds_alternative<MsgCommand>(*cmd));
     const auto& m = std::get<MsgCommand>(*cmd);
-    EXPECT_EQ(m.room, "alice");
+    ASSERT_FALSE(m.rooms.empty());
+    EXPECT_EQ(m.rooms[0], "alice");
     EXPECT_EQ(m.text, "hello world, how are you?");
 }
 
@@ -176,13 +180,13 @@ TEST(ChatStoreTest, ReactOnlyWorksOnReaction) {
     store.post("r", Message("A", "text"));      
     store.post("r", Message("sys", SystemNotice{"joined"})); 
 
-    EXPECT_FALSE(store.react("r", 0));
-    EXPECT_FALSE(store.react("r", 1));
-    EXPECT_FALSE(store.react("r", 10));
+    EXPECT_THROW(store.react("r", 0), TypeMismatchError);
+    EXPECT_THROW(store.react("r", 1), TypeMismatchError);
+    EXPECT_THROW(store.react("r", 10), TypeMismatchError);
 
     store.post("r", Message("B", Reaction{0}));
-    EXPECT_TRUE(store.react("r", 2));
-    EXPECT_TRUE(store.react("r", 2));
+    EXPECT_NO_THROW(store.react("r", 2));
+    EXPECT_NO_THROW(store.react("r", 2)); 
     auto t = store.type_of("r", 2);
     ASSERT_TRUE(t.has_value());
     EXPECT_EQ(*t, "Reaction");
@@ -268,4 +272,62 @@ TEST(DanglingStringViewTest, ShowsBug) {
 
     EXPECT_EQ(tokens[0], "/join");
     EXPECT_EQ(tokens[1], "general");
+}
+// ЭТАП 3
+TEST(ChatStoreTest, StrongGuaranteeOnMultiplePost) {
+    ChatStore store;
+    store.create_room("r1");
+    store.create_room("r2");
+    store.create_room("r3");
+
+    Message::throw_on_copy = true; 
+
+    EXPECT_THROW({
+        store.post_many({"r1", "r2", "r3"}, Message("user", "hello"));
+    }, std::runtime_error);
+
+    Message::throw_on_copy = false; 
+
+    EXPECT_EQ(store.get_rooms_data().at("r1").size(), 0);
+    EXPECT_EQ(store.get_rooms_data().at("r2").size(), 0);
+    EXPECT_EQ(store.get_rooms_data().at("r3").size(), 0);
+}
+
+// Тесты исключений
+TEST(ChatStoreTest, ReactThrowsTypeMismatch) {
+    ChatStore store;
+    store.create_room("r");
+    store.post("r", Message("a", "text")); // TextBody
+    
+    EXPECT_THROW(store.react("r", 0), TypeMismatchError);
+}
+
+TEST(ChatStoreTest, UnknownRoomThrows) {
+    ChatStore store;
+    EXPECT_THROW(store.post("nope", Message("a", "b")), UnknownRoomError);
+}
+
+
+// ДОМАШНЕЕ ЗАДАНИЕ
+
+TEST(FuzzTest, RandomBytesDoNotCrash) {
+    std::mt19937 rng(42); 
+    std::uniform_int_distribution<int> dist(0, 255);
+
+    for (int i = 0; i < 1000; ++i) {
+        std::string random_str;
+        int len = rng() % 100;
+        for (int j = 0; j < len; ++j) {
+            random_str.push_back(static_cast<char>(dist(rng)));
+        }
+
+        try {
+            auto tokens = Lexer::lex(random_str);
+            auto cmd = parse_command_expected(tokens);
+            if (cmd) {
+                (void)cmd.value();
+            }
+        } catch (const std::exception&) {
+        }
+    }
 }

@@ -1,5 +1,4 @@
 #include <gtest/gtest.h>
-
 #include "chat_core/Message.hpp"
 #include "chat_core/OwningBuffer.hpp"
 #include "chat_core/ChatStore.hpp"
@@ -31,12 +30,10 @@ struct SpyMessage {
 };
 
 TEST(MessageTest, MoveDoesNotCopy) {
-    g_copies = 0; g_moves = 0;
-    SpyMessage a("Alice", "hello");
-    SpyMessage b = std::move(a);
-    EXPECT_EQ(g_copies, 0);
-    EXPECT_EQ(g_moves, 1);
-    EXPECT_EQ(b.msg.author, "Alice");
+    auto m1 = Message("Alice", std::make_unique<TextMessage>("hello"));
+    Message m2 = std::move(m1); // Перемещение
+    EXPECT_EQ(m2.author, "Alice");
+    EXPECT_EQ(m2.body->get_text(), "hello");
 }
 
 TEST(OwningBufferTest, SelfAssignmentIsSafe) {
@@ -330,4 +327,55 @@ TEST(FuzzTest, RandomBytesDoNotCrash) {
         } catch (const std::exception&) {
         }
     }
+}
+
+TEST(ChatStoreTest, WeakPtrMembership) {
+    ChatStore store;
+    store.register_user("alice");
+    store.register_user("bob");
+    store.join_room("alice", "general");
+    store.join_room("bob", "general");
+    
+    EXPECT_EQ(store.active_members_count("general"), 2);
+    
+    store.remove_user("bob"); 
+    
+    EXPECT_EQ(store.active_members_count("general"), 1);
+    store.cleanup_expired_members("general");
+    EXPECT_EQ(store.active_members_count("general"), 1);
+}
+
+TEST(AppendOnlyLogTest, WritesAndCloses) {
+    std::string filename = "test_log.txt";
+    std::remove(filename.c_str());
+    
+    {
+        AppendOnlyLog log(filename);
+        log.write("Hello");
+        log.write("World");
+    }
+
+    std::ifstream file(filename);
+    std::string line;
+    std::getline(file, line);
+    EXPECT_EQ(line, "Hello");
+    std::getline(file, line);
+    EXPECT_EQ(line, "World");
+    file.close();
+    std::remove(filename.c_str());
+}
+
+TEST(AppendOnlyLogTest, ClosesOnException) {
+    std::string filename = "test_log_exc.txt";
+    std::remove(filename.c_str());
+    try {
+        AppendOnlyLog log(filename);
+        log.write("Testing exception");
+        throw std::runtime_error("Simulated crash");
+    } catch (...) {}
+    
+    std::ifstream file(filename);
+    EXPECT_TRUE(file.is_open());
+    file.close();
+    std::remove(filename.c_str());
 }

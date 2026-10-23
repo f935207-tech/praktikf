@@ -1,8 +1,12 @@
 #include "chat_core/ChatStore.hpp"
 #include "chat_core/Errors.hpp"
 #include <algorithm>
+#include <iostream>
+#include <ranges>
 
 ChatStore::ChatStore(const std::string& log_filename) : log_(log_filename) {}
+
+void ChatStore::create_room(const std::string& room) { rooms_[room]; }
 
 void ChatStore::post(const std::string& room, Message msg) {
     if (rooms_.find(room) == rooms_.end()) throw UnknownRoomError(room);
@@ -18,40 +22,17 @@ void ChatStore::post_many(const std::vector<std::string>& room_names, Message ms
     for (const auto& r : room_names) {
         Message copy = msg;
         temp[r].push_back(std::move(copy));
-        log_.write("[" + r + "] " + msg.author + ": " + msg.body->get_text());
     }
     rooms_.swap(temp);
-}
-
-void ChatStore::create_room(const std::string& room) { rooms_[room]; }
-std::size_t ChatStore::room_count() const { return rooms_.size(); }
-
-std::optional<std::reference_wrapper<const std::vector<Message>>>
-ChatStore::history(const std::string& room) const {
-    auto it = rooms_.find(room);
-    if (it == rooms_.end()) return std::nullopt;
-    return std::cref(it->second);
 }
 
 void ChatStore::react(const std::string& room, std::size_t index) {
     auto it = rooms_.find(room);
     if (it == rooms_.end()) throw UnknownRoomError(room);
     if (index >= it->second.size()) throw TypeMismatchError("Reaction", "Out of bounds");
-
     auto* r = dynamic_cast<ReactionMessage*>(it->second[index].body.get());
     if (!r) throw TypeMismatchError("Reaction", "Other type");
     r->increment();
-}
-
-void ChatStore::for_each_room(
-    const std::function<void(const std::string&, const std::vector<Message>&)>& visitor) const {
-    for (const auto& [room, messages] : rooms_) visitor(room, messages);
-}
-
-void ChatStore::register_user(const std::string& name) {
-    if (user_registry_.find(name) == user_registry_.end()) {
-        user_registry_[name] = std::make_shared<User>(name);
-    }
 }
 
 void ChatStore::join_room(const std::string& user, const std::string& room) {
@@ -64,23 +45,52 @@ void ChatStore::join_room(const std::string& user, const std::string& room) {
 
 void ChatStore::cleanup_expired_members(const std::string& room) {
     auto& members = room_members_[room];
-    members.erase(
-        std::remove_if(members.begin(), members.end(), 
-            [](const std::weak_ptr<User>& wp) { return wp.expired(); }),
-        members.end()
-    );
-}
-
-std::size_t ChatStore::active_members_count(const std::string& room) const {
-    auto it = room_members_.find(room);
-    if (it == room_members_.end()) return 0;
-    std::size_t count = 0;
-    for (const auto& wp : it->second) {
-        if (!wp.expired()) ++count;
-    }
-    return count;
+    std::erase_if(members, [](const std::weak_ptr<User>& wp) { return wp.expired(); });
 }
 
 void ChatStore::remove_user(const std::string& user) {
     user_registry_.erase(user);
+}
+
+std::vector<std::string> ChatStore::get_history_filtered(
+    const std::string& room, const std::string& author_filter, std::size_t limit) {
+    
+    auto it = rooms_.find(room);
+    if (it == rooms_.end()) return {};
+
+    auto lazy_check = [](const Message& m, const std::string& author) {
+        return author.empty() || m.author == author;
+    };
+
+    auto view = it->second 
+        | std::views::filter([&](const Message& m) { return lazy_check(m, author_filter); })
+        | std::views::transform([](const Message& m) { return m.body->get_text(); })
+        | std::views::take(limit);
+
+    std::vector<std::string> result;
+    std::ranges::copy(view, std::back_inserter(result));
+    return result;
+}
+
+std::vector<std::string> ChatStore::get_members_sorted_by_length(const std::string& room) {
+    auto it = room_members_.find(room);
+    if (it == room_members_.end()) return {};
+
+    std::vector<std::string> names;
+    for (const auto& wp : it->second) {
+        if (auto sp = wp.lock()) {
+            names.push_back(sp->name);
+        }
+    }
+
+    std::ranges::sort(names, {}, [](const std::string& s) { return s.length(); });
+    
+    return names;
+}
+
+auto ChatStore::get_dangling_view() const {
+    std::vector<Message> temp_room; // Временный вектор
+    temp_room.emplace_back("user", std::make_unique<TextMessage>("test"));
+    
+    return temp_room | std::views::transform([](const Message& m) { return m.author; });
 }

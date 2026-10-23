@@ -40,9 +40,22 @@ void execute(const Command& cmd, ChatStore& store) {
 }
 
 int main() {
-    ChatStore store("chat_history.log");
-    store.create_room("general");
+    MessageId id1(1, std::chrono::system_clock::now(), "alice");
+    MessageId id2(1, std::chrono::system_clock::now(), "bob");
+    MessageId id3(2, std::chrono::system_clock::now(), "charlie");
 
+    std::cout << "id1 < id2: " << (id1 < id2) << "\n";
+    std::cout << "id2 < id3: " << (id2 < id3) << "\n";
+    std::cout << "id1 == id2: " << (id1 == id2) << "\n";
+
+    ChatStore store("chat.log");
+    store.register_user("alice");
+    std::string bob_str = "bob";
+    store.register_user(bob_str);
+    std::string_view charlie_view = "charlie";
+    store.register_user(charlie_view);
+
+    std::cout << "=== Chat v05 ===\n";
     std::string line;
     while (std::getline(std::cin, line)) {
         if (line == "/exit") break;
@@ -50,11 +63,8 @@ int main() {
             auto tokens = Lexer::lex(line);
             auto cmd = parse_command_expected(tokens);
             if (!cmd) throw cmd.error();
-            execute(cmd.value(), store);
         } catch (const ChatError& e) {
             std::cerr << "Error: " << e.what() << "\n";
-        } catch (const std::exception& e) {
-            std::cerr << "System error: " << e.what() << "\n";
         }
     }
     return 0;

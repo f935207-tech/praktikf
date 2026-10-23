@@ -7,6 +7,9 @@
 #include "chat_core/Errors.hpp"
 #include <stdexcept>
 #include <random>
+#include "chat_core/MessageId.hpp"
+#include "chat_core/Concepts.hpp"
+#include <ranges>
 
 // ЭТАП 1
 
@@ -378,4 +381,67 @@ TEST(AppendOnlyLogTest, ClosesOnException) {
     EXPECT_TRUE(file.is_open());
     file.close();
     std::remove(filename.c_str());
+}
+
+TEST(MessageIdTest, SpaceshipOperator) {
+    auto now = std::chrono::system_clock::now();
+    MessageId id1(1, now, "alice");
+    MessageId id2(1, now, "bob");
+    
+    EXPECT_TRUE(id1 == id2);
+    EXPECT_FALSE(id1 != id2);
+    
+    MessageId id3(2, now, "alice");
+    EXPECT_TRUE(id1 < id3);
+    EXPECT_TRUE(id1 <= id3);
+    EXPECT_TRUE(id3 > id1);
+    EXPECT_TRUE(id3 >= id1);
+}
+
+TEST(ConceptsTest, Serializable) {
+    struct MockSerializable {
+        std::vector<std::byte> to_bytes() const { return {}; }
+        static MockSerializable from_bytes(std::vector<std::byte>) { return {}; }
+    };
+    
+    static_assert(Serializable<MockSerializable>);
+    static_assert(!Serializable<int>);
+}
+
+TEST(ConceptsTest, NickLike) {
+    static_assert(NickLike<std::string>);
+    static_assert(NickLike<std::string_view>);
+    static_assert(NickLike<const char*>);
+    static_assert(!NickLike<int>);
+    static_assert(!NickLike<double>);
+}
+
+TEST(ChatStoreTest, HistoryRangesFilter) {
+    ChatStore store;
+    store.create_room("general");
+    store.post("general", Message("alice", std::make_unique<TextMessage>("msg1")));
+    store.post("general", Message("bob", std::make_unique<TextMessage>("msg2")));
+    store.post("general", Message("alice", std::make_unique<TextMessage>("msg3")));
+
+    auto history_alice = store.get_history_filtered("general", "alice");
+    ASSERT_EQ(history_alice.size(), 2);
+    EXPECT_EQ(history_alice[0], "msg1");
+    EXPECT_EQ(history_alice[1], "msg3");
+}
+
+TEST(ChatStoreTest, MembersSortedByLength) {
+    ChatStore store;
+    store.register_user("a");
+    store.register_user("charlie");
+    store.register_user("bob");    
+    
+    store.join_room("a", "room");
+    store.join_room("charlie", "room");
+    store.join_room("bob", "room");
+
+    auto sorted = store.get_members_sorted_by_length("room");
+    ASSERT_EQ(sorted.size(), 3);
+    EXPECT_EQ(sorted[0], "a");
+    EXPECT_EQ(sorted[1], "bob");
+    EXPECT_EQ(sorted[2], "charlie");
 }

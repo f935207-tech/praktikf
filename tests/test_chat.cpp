@@ -10,6 +10,8 @@
 #include "chat_core/MessageId.hpp"
 #include "chat_core/Concepts.hpp"
 #include <ranges>
+#include "chat_core/FunctionTraits.hpp"
+#include "chat_core/Convert.hpp"
 
 // ЭТАП 1
 
@@ -444,4 +446,27 @@ TEST(ChatStoreTest, MembersSortedByLength) {
     EXPECT_EQ(sorted[0], "a");
     EXPECT_EQ(sorted[1], "bob");
     EXPECT_EQ(sorted[2], "charlie");
+}
+TEST(FunctionTraitsTest, LambdaArity) {
+    auto lambda = [](int a, std::string_view b) -> double { return 0.0; };
+    
+    using Traits = function_traits<decltype(lambda)>;
+    static_assert(Traits::arity == 2);
+    static_assert(std::is_same_v<Traits::return_type, double>);
+    static_assert(std::is_same_v<Traits::arg<0>, int>);
+    static_assert(std::is_same_v<Traits::arg<1>, std::string_view>);
+    EXPECT_TRUE(true);
+}
+
+TEST(ConvertTest, IfConstexprConvert) {
+    EXPECT_EQ(convert<int>("42"), 42);
+    EXPECT_EQ(convert<double>("3.14"), 3.14);
+    EXPECT_EQ(convert<std::string_view>("hello"), "hello");
+    EXPECT_EQ(convert<std::string>("hello"), "hello");
+    
+    RoomName room = convert<RoomName>("#general");
+    EXPECT_EQ(room.name, "general");
+
+    EXPECT_THROW(convert<int>("abc"), std::runtime_error);
+    EXPECT_THROW(convert<RoomName>("general"), std::runtime_error);
 }
